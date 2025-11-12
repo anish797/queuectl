@@ -5,10 +5,13 @@ import database as db
 import config
 
 def execute_command(command):
+    timeout = config.get('job_timeout')
     try:
-        res = subprocess.run(command, shell=True, capture_output=True, text=True)
+        res = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=timeout)
         success = (res.returncode == 0)
         return success, res.stdout.strip(), res.stderr.strip(), res.returncode
+    except subprocess.TimeoutExpired:
+        return False, "", f"Job exceeded timeout of {timeout} seconds", -1
     except Exception as e:
         return False, "", str(e), -1
     

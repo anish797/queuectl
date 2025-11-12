@@ -6,6 +6,7 @@ config_file = 'queuectl_config.json'
 default_config = {
     'max_retries': 3,
     'backoff_base': 2,
+    'job_timeout': 300,
 }
 
 def load_config():

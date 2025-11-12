@@ -1,2 +1,4 @@
 __pycache__/
 queuectl.egg-info/
+queue.db
+worker.log

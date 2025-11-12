@@ -49,11 +49,27 @@ def cleanup_stale_pid():
 
 @click.group()
 def cli():
+    """queuectl - A CLI-based background job queue system.
+    
+    Manage job queues, workers, and monitor job execution with retry logic.
+    """
     db.init_db()
 
 @cli.command()
 @click.argument('job_json')
 def enqueue(job_json):
+    """Enqueue a new job to the queue.
+    
+    JOB_JSON must be a JSON string containing a 'command' field.
+    Optional fields:
+      - 'id': Custom job ID
+      - 'run_at': Schedule job for future execution (format: 'YYYY-MM-DD HH:MM:SS')
+    
+    Examples:
+      queuectl enqueue '{"command": "echo hello"}'
+      queuectl enqueue '{"id": "my-job", "command": "python script.py"}'
+      queuectl enqueue '{"command": "backup.sh", "run_at": "2025-12-25 02:00:00"}'
+    """
     try:
         job_id = db.enqueue_job(job_json)
         click.echo(f"Job enqueued: {job_id}")
@@ -62,6 +78,10 @@ def enqueue(job_json):
 
 @cli.command()
 def status():
+    """Show queue and worker status summary.
+    
+    Displays job counts by state and information about running workers.
+    """
     try:
         stats = db.get_status()
         click.echo("job queue status:")
@@ -94,8 +114,18 @@ def status():
         click.echo(f"Error: {str(e)}", err=True)
 
 @cli.command()
-@click.option('--state', default=None, help='filter by state')
+@click.option('--state', default=None, help='Filter jobs by state (pending, processing, completed, failed, dead)')
 def list(state):
+    """List all jobs in the queue.
+    
+    Shows job ID, command, current state, and retry attempts.
+    Use --state to filter by specific job states.
+    
+    Examples:
+      queuectl list
+      queuectl list --state failed
+      queuectl list --state dead
+    """
     try:
         jobs = db.list_jobs(state)
         if not jobs:
@@ -113,13 +143,73 @@ def list(state):
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
 
+@cli.command()
+@click.argument('job_id')
+def job(job_id):
+    """Show detailed information about a specific job.
+    
+    Displays full job details including output, errors, and execution history.
+    
+    Example:
+      queuectl job abc123-def456-...
+    """
+    try:
+        job = db.get_job(job_id)
+        if not job:
+            click.echo(f"Job not found: {job_id}")
+            return
+        
+        click.echo("Job Details:")
+        click.echo("=" * 60)
+        click.echo(f"ID:          {job['id']}")
+        click.echo(f"Command:     {job['command']}")
+        click.echo(f"State:       {job['state']}")
+        click.echo(f"Attempts:    {job['attempts']}/{job['max_retries']}")
+        click.echo(f"Created:     {job['created_at']}")
+        click.echo(f"Updated:     {job['updated_at']}")
+        
+        if job['next_retry_at']:
+            click.echo(f"Next Retry:  {job['next_retry_at']}")
+        
+        click.echo("")
+        click.echo("Output:")
+        click.echo("-" * 60)
+        if job['output']:
+            click.echo(job['output'])
+        else:
+            click.echo("(no output)")
+        
+        click.echo("")
+        click.echo("Error:")
+        click.echo("-" * 60)
+        if job['error']:
+            click.echo(job['error'])
+        else:
+            click.echo("(no error)")
+            
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+
 @cli.group()
 def worker():
+    """Manage background worker processes.
+    
+    Start, stop, restart, and monitor workers that process jobs from the queue.
+    """
     pass
 
 @worker.command()
-@click.option('--count', default=1, help='number of workers to start')
+@click.option('--count', default=1, help='Number of parallel workers to start')
 def start(count):
+    """Start worker processes to process jobs.
+    
+    Workers run in the background and process jobs from the queue.
+    Multiple workers can process jobs in parallel. Logs are written to worker.log.
+    
+    Examples:
+      queuectl worker start
+      queuectl worker start --count 4
+    """
     import subprocess
     import sys
     
@@ -152,6 +242,11 @@ def start(count):
 
 @worker.command()
 def stop():
+    """Stop all running worker processes.
+    
+    Attempts graceful shutdown (on Unix/Linux) by allowing workers to finish
+    their current job. On Windows, workers are force-stopped immediately.
+    """
     cleanup_stale_pid()
     pid_info = read_pid_file()
     
@@ -176,27 +271,23 @@ def stop():
         
         if platform.system() == "Windows":
             import subprocess
-            subprocess.run(['taskkill', '/PID', str(pid), '/T'], capture_output=True)
-            for i in range(10):
-                time.sleep(1)
-                if not is_process_running(pid):
-                    click.echo("Workers stopped successfully")
-                    return
+            # Windows doesn't support graceful SIGTERM, use force kill
+            click.echo("Note: Windows requires force-stop (graceful shutdown not supported)")
             subprocess.run(['taskkill', '/F', '/PID', str(pid), '/T'], capture_output=True)
             time.sleep(0.5)
-            click.echo("Workers force-stopped")
+            click.echo("Workers stopped")
         else:
             os.kill(pid, signal.SIGTERM)
-            for i in range(10):
+            for i in range(30):
                 time.sleep(1)
                 if not is_process_running(pid):
-                    click.echo("Workers stopped successfully")
+                    click.echo("Workers stopped gracefully")
                     return
             if is_process_running(pid):
                 click.echo("Workers didn't stop gracefully, forcing shutdown...")
                 os.kill(pid, signal.SIGKILL)
                 time.sleep(0.5)
-                click.echo("Workers force-stopped")
+                click.echo("Workers force-stopped (did not finish within 30 seconds)")
             
     except ProcessLookupError:
         click.echo("Workers already stopped")
@@ -210,8 +301,17 @@ def stop():
             pass
 
 @worker.command()
-@click.option('--count', default=1, help='number of workers to start')
+@click.option('--count', default=1, help='Number of workers to restart with')
 def restart(count):
+    """Restart workers with specified count.
+    
+    Stops any running workers and starts new ones. Useful for changing
+    the number of workers or applying configuration changes.
+    
+    Examples:
+      queuectl worker restart
+      queuectl worker restart --count 8
+    """
     click.echo("Restarting workers...")
     cleanup_stale_pid()
     pid_info = read_pid_file()
@@ -252,6 +352,10 @@ def restart(count):
 
 @worker.command(name='status')
 def worker_status():
+    """Show detailed worker status and recent logs.
+    
+    Displays worker count, PID, and the last 5 log entries.
+    """
     cleanup_stale_pid()
     pid_info = read_pid_file()
     
@@ -288,10 +392,19 @@ def worker_status():
 
 @cli.group()
 def dlq():
+    """Manage the Dead Letter Queue (DLQ).
+    
+    Jobs that fail after max retries are moved to the DLQ.
+    You can inspect failed jobs and retry them if needed.
+    """
     pass
 
 @dlq.command(name='list')
 def dlq_list():
+    """List all jobs in the Dead Letter Queue.
+    
+    Shows jobs that have exhausted all retry attempts and failed permanently.
+    """
     try:
         jobs = db.list_jobs('dead')
         
@@ -316,6 +429,14 @@ def dlq_list():
 @dlq.command()
 @click.argument('job_id')
 def retry(job_id):
+    """Retry a job from the Dead Letter Queue.
+    
+    Moves a failed job back to the pending queue with reset retry count.
+    The job will be processed again by available workers.
+    
+    Example:
+      queuectl dlq retry abc123-def456-...
+    """
     try:
         job = db.get_job(job_id)
         if not job:
@@ -331,15 +452,30 @@ def retry(job_id):
 
 @cli.group()
 def config():
+    """Manage queue configuration settings.
+    
+    Configure retry behavior, backoff timing, and other queue parameters.
+    """
     pass
 
 @config.command(name='set')
 @click.argument('key')
 @click.argument('value', type=int)
 def config_set(key, value):
+    """Set a configuration value.
+    
+    Valid configuration keys:
+      max-retries  - Maximum number of retry attempts (default: 3)
+      backoff-base - Base for exponential backoff calculation (default: 2)
+    
+    Examples:
+      queuectl config set max-retries 5
+      queuectl config set backoff-base 3
+    """
     valid_keys = {
         'max-retries': 'max_retries',
         'backoff-base': 'backoff_base',
+        'job-timeout': 'job_timeout',
     }
     
     if key not in valid_keys:
@@ -353,6 +489,10 @@ def config_set(key, value):
 
 @config.command(name='show')
 def config_show():
+    """Show current configuration values.
+    
+    Displays all configuration settings and their current values.
+    """
     try:
         config_data = cfg.get_all()
         click.echo("current configuration:")

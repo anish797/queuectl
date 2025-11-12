@@ -23,9 +23,10 @@ def init_db():
                 state text not null default 'pending',
                 attempts integer default 0,
                 max_retries integer default 3,
-                created_at timestamp default current_timestamp,
-                updated_at timestamp default current_timestamp,
+                created_at timestamp default (datetime('now', 'localtime')),
+                updated_at timestamp default (datetime('now', 'localtime')),
                 next_retry_at timestamp,
+                run_at timestamp,
                 output text,
                 error text
             )
@@ -38,13 +39,20 @@ def enqueue_job(job_data):
     job_json = json.loads(job_data)
     job_id = job_json.get('id') or str(uuid.uuid4())
     command = job_json['command']
+    run_at = job_json.get('run_at')
     max_retries = config.get('max_retries')
     with get_conn() as conn:
         cursor = conn.cursor()
-        cursor.execute(
-            "insert into jobs (id, command, max_retries) values (?, ?, ?)",
-            (job_id, command, max_retries)
-        )
+        if run_at:
+            cursor.execute(
+                "insert into jobs (id, command, max_retries, run_at, created_at, updated_at) values (?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))",
+                (job_id, command, max_retries, run_at)
+            )
+        else:
+            cursor.execute(
+                "insert into jobs (id, command, max_retries, created_at, updated_at) values (?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))",
+                (job_id, command, max_retries)
+            )
         conn.commit()
         return job_id
 
@@ -58,18 +66,17 @@ def claim_job():
     with get_conn() as conn:
         conn.isolation_level = "EXCLUSIVE"
         cursor = conn.cursor()
-        cursor.execute("""select * from jobs where (state = 'pending' OR state = 'failed') and (next_retry_at IS NULL OR next_retry_at <= current_timestamp) limit 1""")
+        cursor.execute("""select * from jobs where (state = 'pending' OR state = 'failed') and (next_retry_at IS NULL OR next_retry_at <= datetime('now', 'localtime')) and (run_at IS NULL OR run_at <= datetime('now', 'localtime')) limit 1""")
         job = cursor.fetchone()
         if job:
-            cursor.execute("""update jobs set state = 'processing', updated_at = current_timestamp where id = ?""", (job[0],))
+            cursor.execute("""update jobs set state = 'processing', updated_at = datetime('now', 'localtime') where id = ?""", (job[0],))
             conn.commit()
         else:
             conn.rollback()
         return job
 
-
 def update_job_state(job_id, new_state, **kwargs):
-    updates = ["state = ?", "updated_at = current_timestamp"]
+    updates = ["state = ?", "updated_at = datetime('now', 'localtime')"]
     values = [new_state]
     for key, value in kwargs.items():
         updates.append(f"{key} = ?")

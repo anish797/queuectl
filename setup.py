@@ -3,7 +3,7 @@ setup(
     name='queuectl',
     version='0.1.0',
     description='CLI-based background job queue system',
-    author='Your Name',
+    author='Anish',
     py_modules=['cli', 'database', 'config', 'worker', 'launcher'],
     install_requires=[
         'click>=8.0.0',

@@ -21,9 +21,14 @@ def worker_loop(worker_id):
     while not stop_event.is_set():
         job = db.claim_job()
         if job:
+            print(f"Worker {worker_id} processing job {job['id']}, will finish before shutdown.")
             process_job(job)
+            # Check stop_event after finishing job
+            if stop_event.is_set():
+                print(f"Worker {worker_id} received shutdown signal, exiting after completing job.")
+                break
         else:
-            time.sleep(1)
+            time.sleep(0.5)  # Check more frequently
     print(f"Worker {worker_id} shutting down cleanly.")
 
 def write_pid_file(pid, num_workers):
