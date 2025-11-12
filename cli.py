@@ -1,7 +1,51 @@
 import click
 import json
+import os
+import signal
 import database as db
 import config as cfg
+
+PID_FILE = 'queuectl_worker.pid'
+
+def read_pid_file():
+    if not os.path.exists(PID_FILE):
+        return None
+    try:
+        with open(PID_FILE, 'r') as f:
+            content = f.read().strip()
+            parts = content.split(',')
+            if len(parts) == 2:
+                return int(parts[0]), int(parts[1])
+    except Exception:
+        pass
+    return None
+
+def is_process_running(pid):
+    import platform
+    if platform.system() == "Windows":
+        import subprocess
+        try:
+            result = subprocess.run(['tasklist', '/FI', f'PID eq {pid}'], 
+                                  capture_output=True, text=True)
+            return str(pid) in result.stdout
+        except Exception:
+            return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+def cleanup_stale_pid():
+    pid_info = read_pid_file()
+    if pid_info:
+        pid, _ = pid_info
+        if not is_process_running(pid):
+            try:
+                os.remove(PID_FILE)
+            except Exception:
+                pass
 
 @click.group()
 def cli():
@@ -24,12 +68,28 @@ def status():
         click.echo("-" * 40)
         if not stats:
             click.echo("no jobs in queue")
-            return
-        for state, count in stats.items():
-            click.echo(f"  {state}: {count}")
-        total = sum(stats.values())
+        else:
+            for state, count in stats.items():
+                click.echo(f"  {state}: {count}")
+            total = sum(stats.values())
+            click.echo("-" * 40)
+            click.echo(f"  total: {total}")
+        
+        # Worker status
+        click.echo("")
+        click.echo("worker status:")
         click.echo("-" * 40)
-        click.echo(f"  total: {total}")
+        cleanup_stale_pid()
+        pid_info = read_pid_file()
+        if pid_info:
+            pid, worker_count = pid_info
+            if is_process_running(pid):
+                click.echo(f"  {worker_count} worker(s) running (PID: {pid})")
+            else:
+                click.echo("  no workers running (stale PID file removed)")
+        else:
+            click.echo("  no workers running")
+            
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
 
@@ -62,20 +122,169 @@ def worker():
 def start(count):
     import subprocess
     import sys
+    
+    # Check if workers already running
+    cleanup_stale_pid()
+    pid_info = read_pid_file()
+    if pid_info:
+        pid, worker_count = pid_info
+        if is_process_running(pid):
+            click.echo(f"Workers already running (PID: {pid}, count: {worker_count})")
+            click.echo(f"  Use 'queuectl worker stop' first, or 'queuectl worker restart --count {count}'")
+            return
+    
     try:
         subprocess.Popen(
             [sys.executable, 'launcher.py', str(count)],
             stdout=open('worker.log', 'a'),
             stderr=subprocess.STDOUT
         )
-        click.echo(f"✓ Started {count} worker(s) (logs: worker.log)")
+        import time
+        time.sleep(0.5)
+        pid_info = read_pid_file()
+        if pid_info:
+            pid, _ = pid_info
+            click.echo(f"Started {count} worker(s) (PID: {pid}, logs: worker.log)")
+        else:
+            click.echo(f"Started {count} worker(s) but PID file not found (check worker.log)")
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
 
 @worker.command()
 def stop():
-    click.echo("Send CTRL+C to the launcher.py process or kill it manually")
-    click.echo("Use: pkill -f launcher.py")
+    cleanup_stale_pid()
+    pid_info = read_pid_file()
+    
+    if not pid_info:
+        click.echo("No workers running")
+        return
+    
+    pid, worker_count = pid_info
+    
+    if not is_process_running(pid):
+        click.echo("No workers running (stale PID file removed)")
+        try:
+            os.remove(PID_FILE)
+        except Exception:
+            pass
+        return
+    
+    try:
+        click.echo(f"Stopping {worker_count} worker(s) (PID: {pid})...")
+        import platform
+        import time
+        
+        if platform.system() == "Windows":
+            import subprocess
+            subprocess.run(['taskkill', '/PID', str(pid), '/T'], capture_output=True)
+            for i in range(10):
+                time.sleep(1)
+                if not is_process_running(pid):
+                    click.echo("Workers stopped successfully")
+                    return
+            subprocess.run(['taskkill', '/F', '/PID', str(pid), '/T'], capture_output=True)
+            time.sleep(0.5)
+            click.echo("Workers force-stopped")
+        else:
+            os.kill(pid, signal.SIGTERM)
+            for i in range(10):
+                time.sleep(1)
+                if not is_process_running(pid):
+                    click.echo("Workers stopped successfully")
+                    return
+            if is_process_running(pid):
+                click.echo("Workers didn't stop gracefully, forcing shutdown...")
+                os.kill(pid, signal.SIGKILL)
+                time.sleep(0.5)
+                click.echo("Workers force-stopped")
+            
+    except ProcessLookupError:
+        click.echo("Workers already stopped")
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+    finally:
+        try:
+            if os.path.exists(PID_FILE):
+                os.remove(PID_FILE)
+        except Exception:
+            pass
+
+@worker.command()
+@click.option('--count', default=1, help='number of workers to start')
+def restart(count):
+    click.echo("Restarting workers...")
+    cleanup_stale_pid()
+    pid_info = read_pid_file()
+    if pid_info:
+        pid, _ = pid_info
+        if is_process_running(pid):
+            try:
+                import platform
+                import time
+                if platform.system() == "Windows":
+                    import subprocess as sp
+                    sp.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True)
+                else:
+                    os.kill(pid, signal.SIGTERM)
+                time.sleep(2)
+            except Exception:
+                pass
+    import subprocess
+    import sys
+    import time
+    
+    try:
+        subprocess.Popen(
+            [sys.executable, 'launcher.py', str(count)],
+            stdout=open('worker.log', 'a'),
+            stderr=subprocess.STDOUT
+        )
+        time.sleep(0.5)
+        
+        pid_info = read_pid_file()
+        if pid_info:
+            pid, _ = pid_info
+            click.echo(f"Restarted with {count} worker(s) (PID: {pid})")
+        else:
+            click.echo(f"Restarted {count} worker(s) but PID file not found")
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+
+@worker.command(name='status')
+def worker_status():
+    cleanup_stale_pid()
+    pid_info = read_pid_file()
+    
+    if not pid_info:
+        click.echo("No workers running")
+        return
+    
+    pid, worker_count = pid_info
+    
+    if not is_process_running(pid):
+        click.echo("No workers running (stale PID file found)")
+        return
+    
+    click.echo("Worker Status:")
+    click.echo("-" * 40)
+    click.echo(f"  Status: Running")
+    click.echo(f"  Worker Count: {worker_count}")
+    click.echo(f"  Main PID: {pid}")
+    click.echo(f"  Log File: worker.log")
+    if os.path.exists('worker.log'):
+        click.echo("")
+        click.echo("Recent log entries (last 5):")
+        click.echo("-" * 40)
+        import subprocess
+        try:
+            result = subprocess.run(['tail', '-5', 'worker.log'], 
+                                  capture_output=True, text=True)
+            if result.stdout:
+                click.echo(result.stdout)
+            else:
+                click.echo("  (no recent logs)")
+        except Exception:
+            click.echo("  (could not read logs)")
 
 @cli.group()
 def dlq():
