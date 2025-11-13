@@ -2,3 +2,4 @@ __pycache__/
 queuectl.egg-info/
 queue.db
 worker.log
+queuectl_worker.pid

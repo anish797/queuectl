@@ -2,6 +2,10 @@ import click
 import json
 import os
 import signal
+import subprocess
+import sys
+import time
+import platform
 import database as db
 import config as cfg
 
@@ -21,9 +25,7 @@ def read_pid_file():
     return None
 
 def is_process_running(pid):
-    import platform
     if platform.system() == "Windows":
-        import subprocess
         try:
             result = subprocess.run(['tasklist', '/FI', f'PID eq {pid}'], 
                                   capture_output=True, text=True)
@@ -49,40 +51,40 @@ def cleanup_stale_pid():
 
 @click.group()
 def cli():
-    """queuectl - A CLI-based background job queue system.
+    """queuectl - a cli-based background job queue system
     
-    Manage job queues, workers, and monitor job execution with retry logic.
+    manage job queues, workers, and monitor job execution with retry logic
     """
     db.init_db()
 
 @cli.command()
 @click.argument('job_json')
 def enqueue(job_json):
-    """Enqueue a new job to the queue.
-
-    JOB_JSON must be a JSON string containing a 'command' field.
-    Optional fields:
-    - 'id': Custom job ID
-    - 'run_at': Schedule job for future execution (format: 'YYYY-MM-DD HH:MM:SS')
-    - 'priority': Job priority - 1 (high), 2 (normal, default), 3 (low)
-
-    Examples:
-    queuectl enqueue '{"command": "echo hello"}'
-    queuectl enqueue '{"command": "urgent task", "priority": 1}'
-    queuectl enqueue '{"command": "background task", "priority": 3}'
-    queuectl enqueue '{"command": "backup.sh", "run_at": "2025-12-25 02:00:00"}'
+    """enqueue a new job to the queue
+    
+    job_json must be a json string containing a 'command' field
+    optional fields:
+      - 'id': custom job id
+      - 'run_at': schedule job for future execution (format: 'yyyy-mm-dd hh:mm:ss')
+      - 'priority': job priority - 1 (high), 2 (normal, default), 3 (low)
+    
+    examples:
+      queuectl enqueue '{"command": "echo hello"}'
+      queuectl enqueue '{"command": "urgent task", "priority": 1}'
+      queuectl enqueue '{"command": "background task", "priority": 3}'
+      queuectl enqueue '{"command": "backup.sh", "run_at": "2025-12-25 02:00:00"}'
     """
     try:
         job_id = db.enqueue_job(job_json)
-        click.echo(f"Job enqueued: {job_id}")
+        click.echo(f"job enqueued: {job_id}")
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 @cli.command()
 def status():
-    """Show queue and worker status summary.
+    """show queue and worker status summary
     
-    Displays job counts by state and information about running workers.
+    displays job counts by state and information about running workers
     """
     try:
         stats = db.get_status()
@@ -97,7 +99,6 @@ def status():
             click.echo("-" * 40)
             click.echo(f"  total: {total}")
         
-        # Worker status
         click.echo("")
         click.echo("worker status:")
         click.echo("-" * 40)
@@ -106,30 +107,30 @@ def status():
         if pid_info:
             pid, worker_count = pid_info
             if is_process_running(pid):
-                click.echo(f"  {worker_count} worker(s) running (PID: {pid})")
+                click.echo(f"  {worker_count} worker(s) running (pid: {pid})")
             else:
-                click.echo("  no workers running (stale PID file removed)")
+                click.echo("  no workers running (stale pid file removed)")
         else:
             click.echo("  no workers running")
             
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 @cli.command()
 def metrics():
-    """Show queue metrics and statistics.
+    """show queue metrics and statistics
     
-    Displays success rates, job counts, and recent activity.
+    displays success rates, job counts, and recent activity
     """
     try:
         metrics = db.get_metrics()
         
-        click.echo("Queue Metrics:")
+        click.echo("queue metrics:")
         click.echo("=" * 50)
-        click.echo(f"Total Jobs:          {metrics['total_jobs']}")
+        click.echo(f"total jobs:          {metrics['total_jobs']}")
         click.echo("")
         
-        click.echo("Jobs by State:")
+        click.echo("jobs by state:")
         click.echo("-" * 50)
         state_counts = metrics['state_counts']
         total = metrics['total_jobs']
@@ -140,30 +141,30 @@ def metrics():
             click.echo(f"  {state.capitalize():<12} {count:>6} ({pct:>5.1f}%)")
         
         click.echo("")
-        click.echo("Performance:")
+        click.echo("performance:")
         click.echo("-" * 50)
-        click.echo(f"  Success Rate:      {metrics['success_rate']}%")
-        click.echo(f"  Avg Retries:       {metrics['avg_attempts']}")
+        click.echo(f"  success rate:      {metrics['success_rate']}%")
+        click.echo(f"  avg retries:       {metrics['avg_attempts']}")
         
         click.echo("")
-        click.echo("Recent Activity (last 24h):")
+        click.echo("recent activity (last 24h):")
         click.echo("-" * 50)
-        click.echo(f"  Jobs Created:      {metrics['recent_created']}")
-        click.echo(f"  Jobs Completed:    {metrics['recent_completed']}")
-        click.echo(f"  Jobs Failed:       {metrics['recent_failed']}")
+        click.echo(f"  jobs created:      {metrics['recent_created']}")
+        click.echo(f"  jobs completed:    {metrics['recent_completed']}")
+        click.echo(f"  jobs failed:       {metrics['recent_failed']}")
         
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 @cli.command()
-@click.option('--state', default=None, help='Filter jobs by state (pending, processing, completed, failed, dead)')
+@click.option('--state', default=None, help='filter jobs by state (pending, processing, completed, failed, dead)')
 def list(state):
-    """List all jobs in the queue.
+    """list all jobs in the queue
     
-    Shows job ID, command, current state, and retry attempts.
-    Use --state to filter by specific job states.
+    shows job id, command, current state, and retry attempts
+    use --state to filter by specific job states
     
-    Examples:
+    examples:
       queuectl list
       queuectl list --state failed
       queuectl list --state dead
@@ -171,7 +172,7 @@ def list(state):
     try:
         jobs = db.list_jobs(state)
         if not jobs:
-            msg = f"No jobs with state '{state}'" if state else "no jobs in queue"
+            msg = f"no jobs with state '{state}'" if state else "no jobs in queue"
             click.echo(msg)
             return
         click.echo(f"{'id':<20} {'command':<30} {'state':<12} {'attempts':<10}")
@@ -183,38 +184,38 @@ def list(state):
             attempts = f"{job['attempts']}/{job['max_retries']}"
             click.echo(f"{job_id:<20} {command:<30} {state:<12} {attempts:<10}")
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 @cli.command()
 @click.argument('job_id')
 def job(job_id):
-    """Show detailed information about a specific job.
+    """show detailed information about a specific job
     
-    Displays full job details including output, errors, and execution history.
+    displays full job details including output, errors, and execution history
     
-    Example:
+    example:
       queuectl job abc123-def456-...
     """
     try:
         job = db.get_job(job_id)
         if not job:
-            click.echo(f"Job not found: {job_id}")
+            click.echo(f"job not found: {job_id}")
             return
         
-        click.echo("Job Details:")
+        click.echo("job details:")
         click.echo("=" * 60)
-        click.echo(f"ID:          {job['id']}")
-        click.echo(f"Command:     {job['command']}")
-        click.echo(f"State:       {job['state']}")
-        click.echo(f"Attempts:    {job['attempts']}/{job['max_retries']}")
-        click.echo(f"Created:     {job['created_at']}")
-        click.echo(f"Updated:     {job['updated_at']}")
+        click.echo(f"id:          {job['id']}")
+        click.echo(f"command:     {job['command']}")
+        click.echo(f"state:       {job['state']}")
+        click.echo(f"attempts:    {job['attempts']}/{job['max_retries']}")
+        click.echo(f"created:     {job['created_at']}")
+        click.echo(f"updated:     {job['updated_at']}")
         
         if job['next_retry_at']:
-            click.echo(f"Next Retry:  {job['next_retry_at']}")
+            click.echo(f"next retry:  {job['next_retry_at']}")
         
         click.echo("")
-        click.echo("Output:")
+        click.echo("output:")
         click.echo("-" * 60)
         if job['output']:
             click.echo(job['output'])
@@ -222,7 +223,7 @@ def job(job_id):
             click.echo("(no output)")
         
         click.echo("")
-        click.echo("Error:")
+        click.echo("error:")
         click.echo("-" * 60)
         if job['error']:
             click.echo(job['error'])
@@ -230,39 +231,35 @@ def job(job_id):
             click.echo("(no error)")
             
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 @cli.group()
 def worker():
-    """Manage background worker processes.
+    """manage background worker processes
     
-    Start, stop, restart, and monitor workers that process jobs from the queue.
+    start, stop, restart, and monitor workers that process jobs from the queue
     """
     pass
 
 @worker.command()
-@click.option('--count', default=1, help='Number of parallel workers to start')
+@click.option('--count', default=1, help='number of parallel workers to start')
 def start(count):
-    """Start worker processes to process jobs.
+    """start worker processes to process jobs
     
-    Workers run in the background and process jobs from the queue.
-    Multiple workers can process jobs in parallel. Logs are written to worker.log.
+    workers run in the background and process jobs from the queue
+    multiple workers can process jobs in parallel, logs are written to worker.log
     
-    Examples:
+    examples:
       queuectl worker start
       queuectl worker start --count 4
     """
-    import subprocess
-    import sys
-    
-    # Check if workers already running
     cleanup_stale_pid()
     pid_info = read_pid_file()
     if pid_info:
         pid, worker_count = pid_info
         if is_process_running(pid):
-            click.echo(f"Workers already running (PID: {pid}, count: {worker_count})")
-            click.echo(f"  Use 'queuectl worker stop' first, or 'queuectl worker restart --count {count}'")
+            click.echo(f"workers already running (pid: {pid}, count: {worker_count})")
+            click.echo(f"  use 'queuectl worker stop' first, or 'queuectl worker restart --count {count}'")
             return
     
     try:
@@ -271,35 +268,34 @@ def start(count):
             stdout=open('worker.log', 'a'),
             stderr=subprocess.STDOUT
         )
-        import time
         time.sleep(0.5)
         pid_info = read_pid_file()
         if pid_info:
             pid, _ = pid_info
-            click.echo(f"Started {count} worker(s) (PID: {pid}, logs: worker.log)")
+            click.echo(f"started {count} worker(s) (pid: {pid}, logs: worker.log)")
         else:
-            click.echo(f"Started {count} worker(s) but PID file not found (check worker.log)")
+            click.echo(f"started {count} worker(s) but pid file not found (check worker.log)")
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 @worker.command()
 def stop():
-    """Stop all running worker processes.
+    """stop all running worker processes
     
-    Attempts graceful shutdown (on Unix/Linux) by allowing workers to finish
-    their current job. On Windows, workers are force-stopped immediately.
+    attempts graceful shutdown (on unix/linux) by allowing workers to finish
+    their current job, on windows, workers are force-stopped immediately
     """
     cleanup_stale_pid()
     pid_info = read_pid_file()
     
     if not pid_info:
-        click.echo("No workers running")
+        click.echo("no workers running")
         return
     
     pid, worker_count = pid_info
     
     if not is_process_running(pid):
-        click.echo("No workers running (stale PID file removed)")
+        click.echo("no workers running (stale pid file removed)")
         try:
             os.remove(PID_FILE)
         except Exception:
@@ -307,34 +303,30 @@ def stop():
         return
     
     try:
-        click.echo(f"Stopping {worker_count} worker(s) (PID: {pid})...")
-        import platform
-        import time
+        click.echo(f"stopping {worker_count} worker(s) (pid: {pid})...")
         
         if platform.system() == "Windows":
-            import subprocess
-            # Windows doesn't support graceful SIGTERM, use force kill
-            click.echo("Note: Windows requires force-stop (graceful shutdown not supported)")
+            click.echo("note: windows requires force-stop (graceful shutdown not supported)")
             subprocess.run(['taskkill', '/F', '/PID', str(pid), '/T'], capture_output=True)
             time.sleep(0.5)
-            click.echo("Workers stopped")
+            click.echo("workers stopped")
         else:
             os.kill(pid, signal.SIGTERM)
             for i in range(30):
                 time.sleep(1)
                 if not is_process_running(pid):
-                    click.echo("Workers stopped gracefully")
+                    click.echo("workers stopped gracefully")
                     return
             if is_process_running(pid):
-                click.echo("Workers didn't stop gracefully, forcing shutdown...")
+                click.echo("workers didn't stop gracefully, forcing shutdown...")
                 os.kill(pid, signal.SIGKILL)
                 time.sleep(0.5)
-                click.echo("Workers force-stopped (did not finish within 30 seconds)")
+                click.echo("workers force-stopped (did not finish within 30 seconds)")
             
     except ProcessLookupError:
-        click.echo("Workers already stopped")
+        click.echo("workers already stopped")
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
     finally:
         try:
             if os.path.exists(PID_FILE):
@@ -343,37 +335,31 @@ def stop():
             pass
 
 @worker.command()
-@click.option('--count', default=1, help='Number of workers to restart with')
+@click.option('--count', default=1, help='number of workers to restart with')
 def restart(count):
-    """Restart workers with specified count.
+    """restart workers with specified count
     
-    Stops any running workers and starts new ones. Useful for changing
-    the number of workers or applying configuration changes.
+    stops any running workers and starts new ones, useful for changing
+    the number of workers or applying configuration changes
     
-    Examples:
+    examples:
       queuectl worker restart
       queuectl worker restart --count 8
     """
-    click.echo("Restarting workers...")
+    click.echo("restarting workers...")
     cleanup_stale_pid()
     pid_info = read_pid_file()
     if pid_info:
         pid, _ = pid_info
         if is_process_running(pid):
             try:
-                import platform
-                import time
                 if platform.system() == "Windows":
-                    import subprocess as sp
-                    sp.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True)
+                    subprocess.run(['taskkill', '/PID', str(pid), '/T', '/F'], capture_output=True)
                 else:
                     os.kill(pid, signal.SIGTERM)
                 time.sleep(2)
             except Exception:
                 pass
-    import subprocess
-    import sys
-    import time
     
     try:
         subprocess.Popen(
@@ -386,42 +372,41 @@ def restart(count):
         pid_info = read_pid_file()
         if pid_info:
             pid, _ = pid_info
-            click.echo(f"Restarted with {count} worker(s) (PID: {pid})")
+            click.echo(f"restarted with {count} worker(s) (pid: {pid})")
         else:
-            click.echo(f"Restarted {count} worker(s) but PID file not found")
+            click.echo(f"restarted {count} worker(s) but pid file not found")
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 @worker.command(name='status')
 def worker_status():
-    """Show detailed worker status and recent logs.
+    """show detailed worker status and recent logs
     
-    Displays worker count, PID, and the last 5 log entries.
+    displays worker count, pid, and the last 5 log entries
     """
     cleanup_stale_pid()
     pid_info = read_pid_file()
     
     if not pid_info:
-        click.echo("No workers running")
+        click.echo("no workers running")
         return
     
     pid, worker_count = pid_info
     
     if not is_process_running(pid):
-        click.echo("No workers running (stale PID file found)")
+        click.echo("no workers running (stale pid file found)")
         return
     
-    click.echo("Worker Status:")
+    click.echo("worker status:")
     click.echo("-" * 40)
-    click.echo(f"  Status: Running")
-    click.echo(f"  Worker Count: {worker_count}")
-    click.echo(f"  Main PID: {pid}")
-    click.echo(f"  Log File: worker.log")
+    click.echo(f"  status: running")
+    click.echo(f"  worker count: {worker_count}")
+    click.echo(f"  main pid: {pid}")
+    click.echo(f"  log file: worker.log")
     if os.path.exists('worker.log'):
         click.echo("")
-        click.echo("Recent log entries (last 5):")
+        click.echo("recent log entries (last 5):")
         click.echo("-" * 40)
-        import subprocess
         try:
             result = subprocess.run(['tail', '-5', 'worker.log'], 
                                   capture_output=True, text=True)
@@ -434,18 +419,18 @@ def worker_status():
 
 @cli.group()
 def dlq():
-    """Manage the Dead Letter Queue (DLQ).
+    """manage the dead letter queue (dlq)
     
-    Jobs that fail after max retries are moved to the DLQ.
-    You can inspect failed jobs and retry them if needed.
+    jobs that fail after max retries are moved to the dlq
+    you can inspect failed jobs and retry them if needed
     """
     pass
 
 @dlq.command(name='list')
 def dlq_list():
-    """List all jobs in the Dead Letter Queue.
+    """list all jobs in the dead letter queue
     
-    Shows jobs that have exhausted all retry attempts and failed permanently.
+    shows jobs that have exhausted all retry attempts and failed permanently
     """
     try:
         jobs = db.list_jobs('dead')
@@ -466,37 +451,37 @@ def dlq_list():
             click.echo(f"{job_id:<20} {command:<30} {attempts:<10} {error:<30}")
             
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 @dlq.command()
 @click.argument('job_id')
 def retry(job_id):
-    """Retry a job from the Dead Letter Queue.
+    """retry a job from the dead letter queue
     
-    Moves a failed job back to the pending queue with reset retry count.
-    The job will be processed again by available workers.
+    moves a failed job back to the pending queue with reset retry count
+    the job will be processed again by available workers
     
-    Example:
+    example:
       queuectl dlq retry abc123-def456-...
     """
     try:
         job = db.get_job(job_id)
         if not job:
-            click.echo(f"Job not found: {job_id}")
+            click.echo(f"job not found: {job_id}")
             return
         if job['state'] != 'dead':
-            click.echo(f"Job {job_id} is not in dlq (state: {job['state']})")
+            click.echo(f"job {job_id} is not in dlq (state: {job['state']})")
             return
         db.update_job_state(job_id, 'pending', attempts=0, error=None, next_retry_at=None)
-        click.echo(f"Job {job_id} moved back to queue")
+        click.echo(f"job {job_id} moved back to queue")
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 @cli.group()
 def config():
-    """Manage queue configuration settings.
+    """manage queue configuration settings
     
-    Configure retry behavior, backoff timing, and other queue parameters.
+    configure retry behavior, backoff timing, and other queue parameters
     """
     pass
 
@@ -504,15 +489,17 @@ def config():
 @click.argument('key')
 @click.argument('value', type=int)
 def config_set(key, value):
-    """Set a configuration value.
+    """set a configuration value
     
-    Valid configuration keys:
-      max-retries  - Maximum number of retry attempts (default: 3)
-      backoff-base - Base for exponential backoff calculation (default: 2)
+    valid configuration keys:
+      max-retries  - maximum number of retry attempts (default: 3)
+      backoff-base - base for exponential backoff calculation (default: 2)
+      job-timeout  - maximum job execution time in seconds (default: 300)
     
-    Examples:
+    examples:
       queuectl config set max-retries 5
       queuectl config set backoff-base 3
+      queuectl config set job-timeout 600
     """
     valid_keys = {
         'max-retries': 'max_retries',
@@ -521,19 +508,19 @@ def config_set(key, value):
     }
     
     if key not in valid_keys:
-        click.echo(f"Invalid config key: {key}")
-        click.echo(f"Valid keys: {', '.join(valid_keys.keys())}")
+        click.echo(f"invalid config key: {key}")
+        click.echo(f"valid keys: {', '.join(valid_keys.keys())}")
         return
     
     internal_key = valid_keys[key]
     cfg.set_value(internal_key, value)
-    click.echo(f"Set {key} = {value}")
+    click.echo(f"set {key} = {value}")
 
 @config.command(name='show')
 def config_show():
-    """Show current configuration values.
+    """show current configuration values
     
-    Displays all configuration settings and their current values.
+    displays all configuration settings and their current values
     """
     try:
         config_data = cfg.get_all()
@@ -543,7 +530,7 @@ def config_show():
             display_key = key.replace('_', '-')
             click.echo(f"  {display_key}: {value}")
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        click.echo(f"error: {str(e)}", err=True)
 
 if __name__ == '__main__':
     cli()

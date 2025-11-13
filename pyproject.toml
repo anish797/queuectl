@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "queuectl"
+version = "0.1.0"
+description = "CLI-based background job queue system"
+authors = [{name = "Anish"}]
+requires-python = ">=3.7"
+dependencies = [
+    "click>=8.0.0",
+]
+
+[project.scripts]
+queuectl = "cli:cli"
+
+[tool.setuptools]
+py-modules = ["cli", "database", "config", "worker", "launcher"]

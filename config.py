@@ -4,8 +4,8 @@ import os
 config_file = 'queuectl_config.json'
 
 default_config = {
-    'max_retries': 3,
-    'backoff_base': 2,
+    'max_retries': 5,
+    'backoff_base': 3,
     'job_timeout': 300,
 }
 

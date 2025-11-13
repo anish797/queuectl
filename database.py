@@ -69,7 +69,7 @@ def claim_job():
     with get_conn() as conn:
         conn.isolation_level = "EXCLUSIVE"
         cursor = conn.cursor()
-        cursor.execute("""select * from jobs where (state = 'pending' OR state = 'failed') and (next_retry_at IS NULL OR next_retry_at <= datetime('now', 'localtime')) and (run_at IS NULL OR run_at <= datetime('now', 'localtime')) order by priority asc, created_at asc limit 1""")
+        cursor.execute("""select * from jobs where (state = 'pending' or state = 'failed') and (next_retry_at is null or next_retry_at <= datetime('now', 'localtime')) and (run_at is null or run_at <= datetime('now', 'localtime')) order by priority asc, created_at asc limit 1""")
         job = cursor.fetchone()
         if job:
             cursor.execute("""update jobs set state = 'processing', updated_at = datetime('now', 'localtime') where id = ?""", (job[0],))
@@ -94,7 +94,7 @@ def update_job_state(job_id, new_state, **kwargs):
 def list_jobs(state=None):
     with get_conn() as conn:
         cursor = conn.cursor()
-        if(state):
+        if state:
             cursor.execute("select * from jobs where state = ?", (state,))
         else:
             cursor.execute("select * from jobs")
@@ -105,31 +105,31 @@ def get_status():
         cursor = conn.cursor()
         cursor.execute("""select state, count(*) from jobs group by state""")
         return dict(cursor.fetchall())
-    
+
 def get_metrics():
     with get_conn() as conn:
         cursor = conn.cursor()
         
-        cursor.execute("SELECT state, COUNT(*) FROM jobs GROUP BY state")
+        cursor.execute("select state, count(*) from jobs group by state")
         state_counts = dict(cursor.fetchall())
         
-        cursor.execute("SELECT COUNT(*) FROM jobs")
+        cursor.execute("select count(*) from jobs")
         total_jobs = cursor.fetchone()[0]
         
-        cursor.execute("SELECT AVG(attempts) FROM jobs WHERE state IN ('completed', 'dead')")
+        cursor.execute("select avg(attempts) from jobs where state in ('completed', 'dead')")
         avg_attempts = cursor.fetchone()[0] or 0
 
         completed = state_counts.get('completed', 0)
         dead = state_counts.get('dead', 0)
         success_rate = (completed / (completed + dead) * 100) if (completed + dead) > 0 else 0
         
-        cursor.execute("SELECT COUNT(*) FROM jobs WHERE created_at >= datetime('now', 'localtime', '-1 day')")
+        cursor.execute("select count(*) from jobs where created_at >= datetime('now', 'localtime', '-1 day')")
         recent_created = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM jobs WHERE state = 'completed' AND updated_at >= datetime('now', 'localtime', '-1 day')")
+        cursor.execute("select count(*) from jobs where state = 'completed' and updated_at >= datetime('now', 'localtime', '-1 day')")
         recent_completed = cursor.fetchone()[0]
         
-        cursor.execute("SELECT COUNT(*) FROM jobs WHERE state IN ('failed', 'dead') AND updated_at >= datetime('now', 'localtime', '-1 day')")
+        cursor.execute("select count(*) from jobs where state in ('failed', 'dead') and updated_at >= datetime('now', 'localtime', '-1 day')")
         recent_failed = cursor.fetchone()[0]
         
         return {
