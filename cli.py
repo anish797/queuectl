@@ -59,16 +59,18 @@ def cli():
 @click.argument('job_json')
 def enqueue(job_json):
     """Enqueue a new job to the queue.
-    
+
     JOB_JSON must be a JSON string containing a 'command' field.
     Optional fields:
-      - 'id': Custom job ID
-      - 'run_at': Schedule job for future execution (format: 'YYYY-MM-DD HH:MM:SS')
-    
+    - 'id': Custom job ID
+    - 'run_at': Schedule job for future execution (format: 'YYYY-MM-DD HH:MM:SS')
+    - 'priority': Job priority - 1 (high), 2 (normal, default), 3 (low)
+
     Examples:
-      queuectl enqueue '{"command": "echo hello"}'
-      queuectl enqueue '{"id": "my-job", "command": "python script.py"}'
-      queuectl enqueue '{"command": "backup.sh", "run_at": "2025-12-25 02:00:00"}'
+    queuectl enqueue '{"command": "echo hello"}'
+    queuectl enqueue '{"command": "urgent task", "priority": 1}'
+    queuectl enqueue '{"command": "background task", "priority": 3}'
+    queuectl enqueue '{"command": "backup.sh", "run_at": "2025-12-25 02:00:00"}'
     """
     try:
         job_id = db.enqueue_job(job_json)
@@ -110,6 +112,46 @@ def status():
         else:
             click.echo("  no workers running")
             
+    except Exception as e:
+        click.echo(f"Error: {str(e)}", err=True)
+
+@cli.command()
+def metrics():
+    """Show queue metrics and statistics.
+    
+    Displays success rates, job counts, and recent activity.
+    """
+    try:
+        metrics = db.get_metrics()
+        
+        click.echo("Queue Metrics:")
+        click.echo("=" * 50)
+        click.echo(f"Total Jobs:          {metrics['total_jobs']}")
+        click.echo("")
+        
+        click.echo("Jobs by State:")
+        click.echo("-" * 50)
+        state_counts = metrics['state_counts']
+        total = metrics['total_jobs']
+        
+        for state in ['pending', 'processing', 'failed', 'completed', 'dead']:
+            count = state_counts.get(state, 0)
+            pct = (count / total * 100) if total > 0 else 0
+            click.echo(f"  {state.capitalize():<12} {count:>6} ({pct:>5.1f}%)")
+        
+        click.echo("")
+        click.echo("Performance:")
+        click.echo("-" * 50)
+        click.echo(f"  Success Rate:      {metrics['success_rate']}%")
+        click.echo(f"  Avg Retries:       {metrics['avg_attempts']}")
+        
+        click.echo("")
+        click.echo("Recent Activity (last 24h):")
+        click.echo("-" * 50)
+        click.echo(f"  Jobs Created:      {metrics['recent_created']}")
+        click.echo(f"  Jobs Completed:    {metrics['recent_completed']}")
+        click.echo(f"  Jobs Failed:       {metrics['recent_failed']}")
+        
     except Exception as e:
         click.echo(f"Error: {str(e)}", err=True)
 

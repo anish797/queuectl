@@ -23,6 +23,7 @@ def init_db():
                 state text not null default 'pending',
                 attempts integer default 0,
                 max_retries integer default 3,
+                priority integer default 2,
                 created_at timestamp default (datetime('now', 'localtime')),
                 updated_at timestamp default (datetime('now', 'localtime')),
                 next_retry_at timestamp,
@@ -33,6 +34,7 @@ def init_db():
         ''')
         cursor.execute('create index if not exists idx_state on jobs(state)')
         cursor.execute('create index if not exists idx_next_retry on jobs(next_retry_at)')
+        cursor.execute('create index if not exists idx_priority on jobs(priority)')
         conn.commit()
     
 def enqueue_job(job_data):
@@ -40,18 +42,19 @@ def enqueue_job(job_data):
     job_id = job_json.get('id') or str(uuid.uuid4())
     command = job_json['command']
     run_at = job_json.get('run_at')
+    priority = job_json.get('priority', 2)
     max_retries = config.get('max_retries')
     with get_conn() as conn:
         cursor = conn.cursor()
         if run_at:
             cursor.execute(
-                "insert into jobs (id, command, max_retries, run_at, created_at, updated_at) values (?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))",
-                (job_id, command, max_retries, run_at)
+                "insert into jobs (id, command, max_retries, priority, run_at, created_at, updated_at) values (?, ?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))",
+                (job_id, command, max_retries, priority, run_at)
             )
         else:
             cursor.execute(
-                "insert into jobs (id, command, max_retries, created_at, updated_at) values (?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))",
-                (job_id, command, max_retries)
+                "insert into jobs (id, command, max_retries, priority, created_at, updated_at) values (?, ?, ?, ?, datetime('now', 'localtime'), datetime('now', 'localtime'))",
+                (job_id, command, max_retries, priority)
             )
         conn.commit()
         return job_id
@@ -66,7 +69,7 @@ def claim_job():
     with get_conn() as conn:
         conn.isolation_level = "EXCLUSIVE"
         cursor = conn.cursor()
-        cursor.execute("""select * from jobs where (state = 'pending' OR state = 'failed') and (next_retry_at IS NULL OR next_retry_at <= datetime('now', 'localtime')) and (run_at IS NULL OR run_at <= datetime('now', 'localtime')) limit 1""")
+        cursor.execute("""select * from jobs where (state = 'pending' OR state = 'failed') and (next_retry_at IS NULL OR next_retry_at <= datetime('now', 'localtime')) and (run_at IS NULL OR run_at <= datetime('now', 'localtime')) order by priority asc, created_at asc limit 1""")
         job = cursor.fetchone()
         if job:
             cursor.execute("""update jobs set state = 'processing', updated_at = datetime('now', 'localtime') where id = ?""", (job[0],))
@@ -102,3 +105,39 @@ def get_status():
         cursor = conn.cursor()
         cursor.execute("""select state, count(*) from jobs group by state""")
         return dict(cursor.fetchall())
+    
+def get_metrics():
+    with get_conn() as conn:
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT state, COUNT(*) FROM jobs GROUP BY state")
+        state_counts = dict(cursor.fetchall())
+        
+        cursor.execute("SELECT COUNT(*) FROM jobs")
+        total_jobs = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT AVG(attempts) FROM jobs WHERE state IN ('completed', 'dead')")
+        avg_attempts = cursor.fetchone()[0] or 0
+
+        completed = state_counts.get('completed', 0)
+        dead = state_counts.get('dead', 0)
+        success_rate = (completed / (completed + dead) * 100) if (completed + dead) > 0 else 0
+        
+        cursor.execute("SELECT COUNT(*) FROM jobs WHERE created_at >= datetime('now', 'localtime', '-1 day')")
+        recent_created = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM jobs WHERE state = 'completed' AND updated_at >= datetime('now', 'localtime', '-1 day')")
+        recent_completed = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT COUNT(*) FROM jobs WHERE state IN ('failed', 'dead') AND updated_at >= datetime('now', 'localtime', '-1 day')")
+        recent_failed = cursor.fetchone()[0]
+        
+        return {
+            'total_jobs': total_jobs,
+            'state_counts': state_counts,
+            'avg_attempts': round(avg_attempts, 2),
+            'success_rate': round(success_rate, 1),
+            'recent_created': recent_created,
+            'recent_completed': recent_completed,
+            'recent_failed': recent_failed
+        }
